@@ -12,7 +12,7 @@ class OpenRouterService {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          "model": "deepseek/deepseek-r1-zero:free",
+          model: "deepseek/deepseek-r1:free", // Nuevo modelo especificado
           "messages": [
             {
               "role": "user",
