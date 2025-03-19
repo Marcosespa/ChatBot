@@ -7,5 +7,6 @@ export default{
   API_TOKEN:process.env.API_TOKEN,
   PORT:process.env.PORT || 3000,
   BUSINESS_PHONE:process.env.BUSINESS_PHONE,
-  API_VERSION:process.env.API_VERSION
+  API_VERSION:process.env.API_VERSION,
+  OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY
 }

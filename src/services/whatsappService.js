@@ -2,6 +2,8 @@ import axios from 'axios';
 import config from '../config/env.js';
 
 class WhatsAppService {
+
+
   async sendMessage(to, body, messageId) {
     try {
       await axios({
@@ -41,7 +43,6 @@ class WhatsAppService {
       console.error('Error marking message as read:', error);
     }
   }
-
   async sendInteractiveButtons(to, BodyText, buttons) {
     try {
       await axios({
@@ -67,6 +68,44 @@ class WhatsAppService {
       console.log(error)
     }
   }
+  async sendMediaMessage(to, type, mediaUrl, caption) {
+    try {
+      const mediaObject = {};
+      switch (type) {
+        case 'image':
+          mediaObject.image = { link: mediaUrl, caption: caption }
+          break;
+        case 'audio':
+          mediaObject.audio = { link: mediaUrl };
+          break;
+        case 'document':
+          mediaObject.document = { link: mediaUrl, caption: caption }
+          break;
+        default:
+          throw new Error('not soported media');
+          break;
+      }
+      await axios({
+        method: 'POST',
+        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        headers: {
+          Authorization: `Bearer ${config.API_TOKEN}`,
+        },
+        data: {
+          messaging_product: 'whatsapp',
+          to,
+          type: type,
+          ...mediaObject
+        },
+      });
+
+
+    } catch (error) {
+      console.error(error)
+    }
+
+  }
+
 }
 
 export default new WhatsAppService();
