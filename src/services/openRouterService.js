@@ -1,6 +1,5 @@
-import OpenAI from "openai";
 import fetch from 'node-fetch';
-import config from '../config/env.js'; // Para usar variables de entorno
+import config from '../config/env.js';
 
 class OpenRouterService {
   async getAIResponse(message) {
@@ -12,8 +11,12 @@ class OpenRouterService {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          model: "deepseek/deepseek-r1:free", // Nuevo modelo especificado
-          "messages": [
+          model: "deepseek/deepseek-r1:free",
+          messages: [
+            {
+              "role": "system",
+              "content": "Responde siempre en español, con texto plano sin prefijos como 'Respuesta: y ademas no uses * "
+            },
             {
               "role": "user",
               "content": message

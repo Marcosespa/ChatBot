@@ -106,6 +106,27 @@ class WhatsAppService {
 
   }
 
+  async SendContactMessage(to, contact){
+    try {
+      
+      await axios({
+        method: 'POST',
+        url: `https://graph.facebook.com/${config.API_VERSION}/${config.BUSINESS_PHONE}/messages`,
+        headers: {
+          Authorization: `Bearer ${config.API_TOKEN}`,
+        },
+        data: {
+          messaging_product: 'whatsapp',
+          to,
+          text: 'contacs',
+          contacts:[contact]
+        },
+      });
+
+    } catch (error) {
+      console.log(error)
+    }
+  }
 }
 
 export default new WhatsAppService();
