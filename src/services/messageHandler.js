@@ -1,5 +1,5 @@
 import whatsappService from './whatsappService.js';
-import appendToSheet from './googleSheetsService.js';
+import { appendToSheet, fetchFromSheet } from './googleSheetsService.js';
 import openRouterService from './openRouterService.js';
 
 class MessageHandler {
@@ -59,7 +59,7 @@ class MessageHandler {
 
   async assignTrip(to, transportData) {
     console.log("Datos recibidos en assignTrip:", transportData);
-    const availableTrip = this.findAvailableTrip(transportData);
+    const availableTrip = await this.findAvailableTrip(transportData);
     if (!availableTrip) {
       await whatsappService.sendMessage(to, "No hay viajes disponibles ahora. Intenta más tarde.");
       return null;
@@ -76,6 +76,7 @@ class MessageHandler {
         - Origen: ${availableTrip.origin}
         - Destino: ${availableTrip.destination}
         - Recogida: ${availableTrip.pickupTime}
+        - Flete: $${availableTrip.flete}
         Tienes 10 minutos para responder. ¿Aceptas?
       `,
       buttons: [
@@ -105,16 +106,18 @@ class MessageHandler {
         Código de confirmación: ${confirmationCode}
         Contacto del cliente: +573135815118
         Detalles: ${assignment.trip.origin} -> ${assignment.trip.destination}
+        Flete: $${assignment.trip.flete}
       `;
       await whatsappService.sendMessage(to, finalMessage);
       const acceptedTripData = [
         to,
         assignment.trip.cargoType,
         assignment.trip.weight,
-        assignment.trip.volume, // Corregido de "volumen" a "volume"
+        assignment.trip.volume,
         assignment.trip.origin,
         assignment.trip.destination,
         assignment.trip.pickupTime,
+        assignment.trip.flete,
         confirmationCode,
         new Date().toISOString()
       ];
@@ -165,7 +168,7 @@ class MessageHandler {
   }
 
   async askForHumanAgent(to) {
-    const message = "¿Necesitas hablar con un agente humano?";
+    const message = "¿Estás seguro de que quieres hablar con un agente humano?";
     const buttons = [
       { type: 'reply', reply: { id: 'yes_agent', title: "Sí" } },
       { type: 'reply', reply: { id: 'no_agent', title: "No" } }
@@ -187,7 +190,7 @@ class MessageHandler {
         break;
       case 'soporte':
         this.assistantState[to] = { active: true };
-        await whatsappService.sendMessage(to, "Soy tu asistente IA de Transporte CargaLibre. ¿En qué puedo ayudarte con el negocio?");
+        await whatsappService.sendMessage(to, "Soy tu asistente IA de Transporte CargaLibre. ¿En qué puedo ayudarte? Si necesitas salir, di 'salir'. Si quieres hablar con un humano, di 'agente'.");
         break;
       case 'sí':
         delete this.assistantState[to];
@@ -196,7 +199,11 @@ class MessageHandler {
         await this.sendMainMenu(to);
         break;
       case 'no':
-        await whatsappService.sendMessage(to, "Perfecto, sigo aquí para ayudarte. ¿En qué más puedo ayudarte?");
+        if (this.assistantState[to]) {
+          await whatsappService.sendMessage(to, "Perfecto, sigo aquí para ayudarte. ¿En qué más puedo ayudarte?");
+        } else {
+          await this.sendMainMenu(to);
+        }
         break;
       default:
         await whatsappService.sendMessage(to, "Opción no válida. Selecciona una del menú.");
@@ -204,13 +211,20 @@ class MessageHandler {
   }
 
   async handleAIAssistantFlow(to, message) {
-    if (message === 'salir' || message === 'volver') {
+    const lowerMessage = message.toLowerCase().trim();
+
+    if (lowerMessage === 'salir' || lowerMessage === 'volver') {
       delete this.assistantState[to];
       await whatsappService.sendMessage(to, "Volviendo al menú principal...");
       await this.sendMainMenu(to);
       return;
     }
-    const lowerMessage = message.toLowerCase();
+
+    if (lowerMessage.includes('agente') || lowerMessage.includes('humano')) {
+      await this.askForHumanAgent(to);
+      return;
+    }
+
     if (lowerMessage.includes('disponibilidad') || lowerMessage.includes('viaje') || lowerMessage.includes('vehículo')) {
       delete this.assistantState[to];
       this.appointState[to] = { step: 'vehicleType' };
@@ -223,9 +237,9 @@ class MessageHandler {
       this.appointState[to] = { step: 'balanceId' };
       return;
     }
+
     const aiResponse = await openRouterService.getAIResponse(message);
-    await whatsappService.sendMessage(to, aiResponse);
-    await this.askForHumanAgent(to);
+    await whatsappService.sendMessage(to, `${aiResponse}\n\nSi necesitas algo más, solo dime. Puedes decir 'salir' para volver al menú o 'agente' si quieres hablar con un humano.`);
   }
 
   async handleTransportAvailabilityFlow(to, message) {
@@ -319,38 +333,57 @@ class MessageHandler {
     }
   }
 
-  findAvailableTrip(transportData) {
-    const trips = [
-      { cargoType: "Madera", weight: 5, volume: 15, origin: "Medellín", originLat: 6.2518, originLon: -75.5636, destination: "Bogotá", pickupTime: "2025-03-20 10:00" },
-      { cargoType: "Alimentos", weight: 1.5, volume: 10, origin: "Cali", originLat: 3.4516, originLon: -76.5320, destination: "Barranquilla", pickupTime: "2025-03-20 17:00" }
-    ];
+  async findAvailableTrip(transportData) {
+    try {
+      const rows = await fetchFromSheet("ViajesDisponibles", "A:I");
+      if (!rows || rows.length <= 1) {
+        console.log("No hay viajes disponibles en ViajesDisponibles.");
+        return null;
+      }
 
-    function calculateDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-        Math.sin(dLon / 2) * Math.sin(dLon / 2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
+      const trips = rows.slice(1).map(row => ({
+        cargoType: row[0],
+        weight: parseFloat(row[1]),
+        volume: parseFloat(row[2]),
+        origin: row[3],
+        originLat: parseFloat(row[4]),
+        originLon: parseFloat(row[5]),
+        destination: row[6],
+        pickupTime: row[7] || new Date().toISOString(),
+        flete: parseFloat(row[8]) || 0
+      }));
+
+      function calculateDistance(lat1, lon1, lat2, lon2) {
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      }
+
+      const foundTrip = trips.find(trip => {
+        const weightMatch = trip.weight <= transportData.capacity;
+        const volumeMatch = trip.volume <= transportData.volume;
+        const distance = calculateDistance(
+          transportData.location.latitude,
+          transportData.location.longitude,
+          trip.originLat,
+          trip.originLon
+        );
+        const locationMatch = distance <= 50;
+        console.log(`Evaluando viaje: ${trip.cargoType} - Peso: ${weightMatch}, Volumen: ${volumeMatch}, Distancia: ${distance.toFixed(2)} km, Coincide: ${locationMatch}, Flete: $${trip.flete}`);
+        return weightMatch && volumeMatch && locationMatch;
+      });
+
+      console.log("Viaje encontrado:", foundTrip || "Ninguno");
+      return foundTrip;
+    } catch (error) {
+      console.error("Error al consultar ViajesDisponibles:", error);
+      return null;
     }
-
-    const foundTrip = trips.find(trip => {
-      const weightMatch = trip.weight <= transportData.capacity;
-      const volumeMatch = trip.volume <= transportData.volume; 
-      const distance = calculateDistance(
-        transportData.location.latitude,
-        transportData.location.longitude,
-        trip.originLat,
-        trip.originLon
-      );
-      const locationMatch = distance <= 50;
-      console.log(`Evaluando viaje: ${trip.cargoType} - Peso: ${weightMatch}, Volumen: ${volumeMatch}, Distancia: ${distance.toFixed(2)} km, Coincide: ${locationMatch}`);
-      return weightMatch && volumeMatch && locationMatch;
-    });
-    console.log("Viaje encontrado:", foundTrip || "Ninguno");
-    return foundTrip;
   }
 
   async handleTripTimeout(to) {
@@ -365,20 +398,63 @@ class MessageHandler {
   async handleBalanceFlow(to, message) {
     const state = this.appointState[to];
     if (state.step === 'balanceId') {
-      const balance = this.getBalance(message);
-      const response = `
-        ID: ${message}
-        Saldo disponible: $${balance.available}
-        Facturas pendientes: $${balance.pending} (Próximo pago: ${balance.nextPayment})
-      `;
+      const balances = await this.getBalance(message);
+      let response;
+
+      if (balances.length === 0) {
+        response = `
+          ID: ${message}
+          No se encontraron saldos registrados para este ID.
+        `;
+      } else {
+        const totalAvailable = balances.reduce((sum, b) => sum + b.available, 0);
+        const totalPending = balances.reduce((sum, b) => sum + b.pending, 0);
+        const pendingDetails = balances.map((b, index) => 
+          `Pago ${index + 1}: $${b.pending} (Próximo pago: ${b.nextPayment})`
+        ).join('\n');
+        response = `
+          ID: ${message}
+          Saldo disponible total: $${totalAvailable}
+          Facturas pendientes totales: $${totalPending}
+          Detalles de pagos pendientes:
+          ${pendingDetails}
+        `;
+      }
+
       await whatsappService.sendMessage(to, response);
       delete this.appointState[to];
       await this.sendMainMenu(to);
     }
   }
 
-  getBalance(id) {
-    return { available: 1500000, pending: 500000, nextPayment: "2025-03-25" };
+  async getBalance(id) {
+    try {
+      const rows = await fetchFromSheet("Saldos", "A:D");
+      if (!rows || rows.length <= 1) {
+        console.log("No hay datos de saldos en Saldos.");
+        return [];
+      }
+
+      // Filtrar todas las filas que coincidan con el ID
+      const balanceRows = rows.slice(1).filter(row => row[0] === id);
+      if (balanceRows.length === 0) {
+        console.log(`No se encontraron saldos para el ID: ${id}`);
+        return [];
+      }
+
+      // Mapear todas las coincidencias a objetos
+      const balances = balanceRows.map(row => ({
+        available: parseFloat(row[1]) || 0,
+        pending: parseFloat(row[2]) || 0,
+        nextPayment: row[3] || "N/A"
+      }));
+
+      console.log(`Saldos encontrados para el ID ${id}:`, balances);
+      return balances;
+    } catch (error) {
+      console.error("Error al consultar Saldos:", error);
+      return [];
+    }
   }
 
   async sendContact(to) {
