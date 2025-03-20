@@ -32,8 +32,17 @@ class MessageHandler {
           await this.sendWelcomeMessage(message.from, message.id, senderInfo);
           await this.sendMainMenu(message.from);
         } else {
-          const aiResponse = await openRouterService.getAIResponse(message.text.body);
-          await whatsappService.sendMessage(message.from, aiResponse, message.id);
+          const validCommands = ['saldo', 'disponibilidad', 'soporte', 'viaje', 'factura'];
+          if (validCommands.some(cmd => incomingMessage.includes(cmd))) {
+            const aiResponse = await openRouterService.getAIResponse(message.text.body);
+            await whatsappService.sendMessage(message.from, aiResponse, message.id);
+          } else {
+            await whatsappService.sendMessage(
+              message.from,
+              'No reconocí tu mensaje. Usa "hola" para empezar o di "soporte" para ayuda.',
+              message.id
+            );
+          }
         }
         await whatsappService.markAsRead(message.id);
       } catch (error) {
