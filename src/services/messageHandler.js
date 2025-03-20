@@ -5,29 +5,32 @@ import openRouterService from './openRouterService.js';
 class MessageHandler {
   constructor() {
     this.appointState = {};
-    this.assistandState = {};
+    this.tripAssignment = {};
+    this.assistantState = {};
+    this.timeoutIds = {};
   }
 
   async handleIncomingMessage(message, senderInfo) {
     if (message?.type === 'text' && message?.from && message?.id) {
       try {
         const incomingMessage = message.text.body.toLowerCase().trim();
-
+        console.log(`Mensaje de texto recibido: ${incomingMessage}`);
         if (this.appointState[message.from]) {
-          console.log("En flujo de agendamiento:", this.appointState[message.from]);
-          await this.handleAppointmentFlow(message.from, incomingMessage);
+          await this.handleAdditionalFlows(message.from, incomingMessage);
           return;
         }
-
+        if (this.tripAssignment[message.from]) {
+          console.log(`Asignación activa encontrada para ${message.from}, procesando texto`);
+          await this.handleTripResponse(message.from, incomingMessage);
+          return;
+        }
+        if (this.assistantState[message.from]) {
+          await this.handleAIAssistantFlow(message.from, incomingMessage);
+          return;
+        }
         if (this.isGreeting(incomingMessage)) {
           await this.sendWelcomeMessage(message.from, message.id, senderInfo);
-          await this.sendWelcomeMenu(message.from);
-        } else if (incomingMessage === "media") {
-          await this.sendMedia(message.from);
-        } else if (incomingMessage === "emergencia") {
-          const response = "Si esto es una emergencia, te invitamos a llamar a nuestra línea de atención.";
-          await whatsappService.sendMessage(message.from, response, message.id);
-          await this.sendContact(message.from);
+          await this.sendMainMenu(message.from);
         } else {
           const aiResponse = await openRouterService.getAIResponse(message.text.body);
           await whatsappService.sendMessage(message.from, aiResponse, message.id);
@@ -37,10 +40,92 @@ class MessageHandler {
         console.error('Error handling message:', error);
         await whatsappService.sendMessage(message.from, "Lo siento, ocurrió un error. Intenta de nuevo.");
       }
-    } else if (message?.type === 'interactive') {
-      const option = message?.interactive?.button_reply?.title.toLowerCase().trim();
-      await this.handleMenuOption(message.from, option);
+    } else if (message?.type === 'location' && message?.from && message?.id) {
+      if (this.appointState[message.from] && this.appointState[message.from].step === 'location') {
+        await this.handleLocationMessage(message.from, message.location);
+      }
       await whatsappService.markAsRead(message.id);
+    } else if (message?.type === 'interactive' && message?.from && message?.id) {
+      const option = message.interactive.button_reply.title.toLowerCase().trim();
+      console.log(`Mensaje interactivo recibido: ${option}, Asignación activa: ${!!this.tripAssignment[message.from]}`);
+      if (this.tripAssignment[message.from]) {
+        await this.handleTripResponse(message.from, option);
+      } else {
+        await this.handleMenuOption(message.from, option);
+      }
+      await whatsappService.markAsRead(message.id);
+    }
+  }
+
+  async assignTrip(to, transportData) {
+    console.log("Datos recibidos en assignTrip:", transportData);
+    const availableTrip = this.findAvailableTrip(transportData);
+    if (!availableTrip) {
+      await whatsappService.sendMessage(to, "No hay viajes disponibles ahora. Intenta más tarde.");
+      return null;
+    }
+
+    this.tripAssignment[to] = { trip: availableTrip, assignedAt: Date.now() };
+    console.log(`Asignación creada para ${to}:`, this.tripAssignment[to]);
+    const tripMessage = {
+      text: `
+        Te hemos asignado un viaje:
+        - Tipo de carga: ${availableTrip.cargoType}
+        - Peso: ${availableTrip.weight} toneladas
+        - Volumen: ${availableTrip.volume} m³
+        - Origen: ${availableTrip.origin}
+        - Destino: ${availableTrip.destination}
+        - Recogida: ${availableTrip.pickupTime}
+        Tienes 10 minutos para responder. ¿Aceptas?
+      `,
+      buttons: [
+        { type: 'reply', reply: { id: 'accept', title: "Aceptar" } },
+        { type: 'reply', reply: { id: 'reject', title: "Rechazar" } }
+      ]
+    };
+    this.timeoutIds[to] = setTimeout(() => this.handleTripTimeout(to), 10 * 60 * 1000);
+    return tripMessage;
+  }
+
+  async handleTripResponse(to, response) {
+    const assignment = this.tripAssignment[to];
+    console.log(`handleTripResponse - to: ${to}, response: ${response}, assignment:`, assignment);
+    if (!assignment) {
+      await whatsappService.sendMessage(to, "No hay una asignación activa. Por favor, registra tu disponibilidad nuevamente.");
+      return;
+    }
+
+    clearTimeout(this.timeoutIds[to]);
+    delete this.timeoutIds[to];
+
+    if (response === 'aceptar') {
+      const confirmationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const finalMessage = `
+        ¡Viaje aceptado!
+        Código de confirmación: ${confirmationCode}
+        Contacto del cliente: +573135815118
+        Detalles: ${assignment.trip.origin} -> ${assignment.trip.destination}
+      `;
+      await whatsappService.sendMessage(to, finalMessage);
+      const acceptedTripData = [
+        to,
+        assignment.trip.cargoType,
+        assignment.trip.weight,
+        assignment.trip.volume, // Corregido de "volumen" a "volume"
+        assignment.trip.origin,
+        assignment.trip.destination,
+        assignment.trip.pickupTime,
+        confirmationCode,
+        new Date().toISOString()
+      ];
+      await appendToSheet(acceptedTripData, "ViajesAceptados");
+      delete this.tripAssignment[to];
+    } else if (response === 'rechazar') {
+      await whatsappService.sendMessage(to, "Viaje rechazado. Puedes solicitar otro cuando desees.");
+      delete this.tripAssignment[to];
+      await this.sendMainMenu(to);
+    } else {
+      await whatsappService.sendMessage(to, "Respuesta no válida. Usa los botones 'Aceptar' o 'Rechazar'.");
     }
   }
 
@@ -49,156 +134,271 @@ class MessageHandler {
     return greetings.some(greeting => message.startsWith(greeting));
   }
 
+  async handleLocationMessage(to, location) {
+    const state = this.appointState[to];
+    if (state.step === 'location') {
+      state.location = { latitude: location.latitude, longitude: location.longitude };
+      await this.completeTransportAvailability(to);
+    }
+  }
+
   getSenderName(senderInfo) {
-    const rawName = senderInfo?.profile?.name || senderInfo?.wa_id || "amiguito";
-    const cleanedName = rawName.match(/[A-Za-zÁÉÍÓÚáéíóúÑñ'-. ]+/g)?.join('') || "amiguito";
+    const rawName = senderInfo?.profile?.name || senderInfo?.wa_id || "transportista";
+    const cleanedName = rawName.match(/[A-Za-zÁÉÍÓÚáéíóúÑñ'-. ]+/g)?.join('') || "transportista";
     return cleanedName.trim();
   }
 
   async sendWelcomeMessage(to, messageId, senderInfo) {
     const name = this.getSenderName(senderInfo);
-    const WELCOME_MESSAGE = `Hola ${name}, bienvenido a CargaLibre. ¿En qué puedo ayudarte el día de hoy?`;
+    const WELCOME_MESSAGE = `Hola ${name}, bienvenido a Transporte CargaLibre. ¿En qué puedo ayudarte hoy?`;
     await whatsappService.sendMessage(to, WELCOME_MESSAGE, messageId);
   }
 
-  async sendWelcomeMenu(to) {
-    const menuMessage = "Elige una opción";
+  async sendMainMenu(to) {
+    const menuMessage = "Selecciona una opción:";
     const buttons = [
-      { type: 'reply', reply: { id: 'option_1', title: "Agendar" } },
-      { type: 'reply', reply: { id: 'option_2', title: "Emergencia" } },
-      { type: 'reply', reply: { id: 'option_3', title: "AsistenteAi" } }
+      { type: 'reply', reply: { id: 'option_1', title: "Disponibilidad" } },
+      { type: 'reply', reply: { id: 'option_2', title: "Consultar Saldo" } },
+      { type: 'reply', reply: { id: 'option_3', title: "Soporte" } }
     ];
     await whatsappService.sendInteractiveButtons(to, menuMessage, buttons);
   }
 
+  async askForHumanAgent(to) {
+    const message = "¿Necesitas hablar con un agente humano?";
+    const buttons = [
+      { type: 'reply', reply: { id: 'yes_agent', title: "Sí" } },
+      { type: 'reply', reply: { id: 'no_agent', title: "No" } }
+    ];
+    await whatsappService.sendInteractiveButtons(to, message, buttons);
+  }
+
   async handleMenuOption(to, option) {
-    console.log("Opción seleccionada:", option);
     switch (option) {
-      case 'agendar':
-        this.appointState[to] = { step: 'name' };
-        await whatsappService.sendMessage(to, "Por favor ingresa tu nombre");
+      case 'disponibilidad':
+        delete this.assistantState[to];
+        this.appointState[to] = { step: 'vehicleType' };
+        await whatsappService.sendMessage(to, "Por favor, indica el tipo de vehículo (turbo, sencillo, dobletroque, mula, etc.).");
         break;
-      case 'emergencia':
-        await whatsappService.sendMessage(to, "Si esto es una emergencia, te invitamos a llamar a nuestra línea de atención.");
+      case 'consultar saldo':
+        delete this.assistantState[to];
+        await whatsappService.sendMessage(to, "Por favor, ingresa tu ID de manifiesto.");
+        this.appointState[to] = { step: 'balanceId' };
+        break;
+      case 'soporte':
+        this.assistantState[to] = { active: true };
+        await whatsappService.sendMessage(to, "Soy tu asistente IA de Transporte CargaLibre. ¿En qué puedo ayudarte con el negocio?");
+        break;
+      case 'sí':
+        delete this.assistantState[to];
+        await whatsappService.sendMessage(to, "Contacta a nuestro equipo: +573135815118");
         await this.sendContact(to);
+        await this.sendMainMenu(to);
         break;
-      case 'asistenteai':
-        await whatsappService.sendMessage(to, "Soy tu asistente IA. ¿En qué puedo ayudarte?");
+      case 'no':
+        await whatsappService.sendMessage(to, "Perfecto, sigo aquí para ayudarte. ¿En qué más puedo ayudarte?");
         break;
       default:
-        await whatsappService.sendMessage(to, "Lo siento, no entendí tu selección. Por favor elige una de las opciones del menú.");
+        await whatsappService.sendMessage(to, "Opción no válida. Selecciona una del menú.");
     }
   }
 
-  async sendMedia(to) {
-    const mediaUrl = 'https://s3.amazonaws.com/gndx.dev/medpet-imagen.png';
-    const caption = '¡Esto es una Imagen!';
-    const type = 'image';
-    await whatsappService.sendMediaMessage(to, type, mediaUrl, caption);
-  }
-
-  completeAppointment(to) {
-    const appointment = this.appointState[to];
-    if (!appointment) {
-      return "Error: No hay una cita en curso.";
-    }
-    delete this.appointState[to];
-    const userData = [
-      to,
-      appointment.name,
-      appointment.petName,
-      appointment.petType,
-      appointment.reason,
-      new Date().toISOString()
-    ];
-    console.log("Datos de la cita completada:", userData);
-    appendToSheet(userData);
-    return "¡Gracias! Tu cita ha sido registrada correctamente.";
-  }
-
-  async handleAppointmentFlow(to, message) {
-    const state = this.appointState[to];
-    if (!state) {
-      console.error(`❌ No hay flujo de agendamiento activo para ${to}`);
+  async handleAIAssistantFlow(to, message) {
+    if (message === 'salir' || message === 'volver') {
+      delete this.assistantState[to];
+      await whatsappService.sendMessage(to, "Volviendo al menú principal...");
+      await this.sendMainMenu(to);
       return;
     }
+    const lowerMessage = message.toLowerCase();
+    if (lowerMessage.includes('disponibilidad') || lowerMessage.includes('viaje') || lowerMessage.includes('vehículo')) {
+      delete this.assistantState[to];
+      this.appointState[to] = { step: 'vehicleType' };
+      await whatsappService.sendMessage(to, "Te voy a guiar para registrar tu disponibilidad. Por favor, indica el tipo de vehículo (camión, tráiler, furgón, etc.).");
+      return;
+    }
+    if (lowerMessage.includes('saldo') || lowerMessage.includes('pago') || lowerMessage.includes('factura')) {
+      delete this.assistantState[to];
+      await whatsappService.sendMessage(to, "Te voy a ayudar a consultar tu saldo. Por favor, ingresa tu ID de transportista.");
+      this.appointState[to] = { step: 'balanceId' };
+      return;
+    }
+    const aiResponse = await openRouterService.getAIResponse(message);
+    await whatsappService.sendMessage(to, aiResponse);
+    await this.askForHumanAgent(to);
+  }
+
+  async handleTransportAvailabilityFlow(to, message) {
+    const state = this.appointState[to];
     let response;
     switch (state.step) {
-      case 'name':
-        state.name = message;
-        state.step = 'petName';
-        response = 'Gracias, ahora ¿cuál es el nombre de tu mascota?';
+      case 'vehicleType':
+        state.vehicleType = message;
+        state.step = 'placa';
+        response = '¿Cuál es la placa de tu vehículo?';
         break;
-      case 'petName':
-        state.petName = message;
-        state.step = 'petType';
-        response = '¿Qué tipo de mascota es? (ejemplo: perro, gato, etc.)';
+      case 'placa':
+        if (!/^[A-Z]{3}\d{3}$/.test(message.toUpperCase())) {
+          response = 'Por favor, ingresa una placa válida (ejemplo: ABC123).';
+        } else {
+          state.placa = message.toUpperCase();
+          state.step = 'modelo';
+          response = '¿Qué modelo es tu vehículo? (ejemplo: 2020)';
+        }
         break;
-      case 'petType':
-        state.petType = message;
-        state.step = 'reason';
-        response = '¿Cuál es el motivo de la consulta?';
+      case 'modelo':
+        if (!/^\d{4}$/.test(message)) {
+          response = 'Por favor, ingresa un año válido (ejemplo: 2020).';
+        } else {
+          state.modelo = message;
+          state.step = 'volume';
+          response = '¿Cuál es la capacidad de volumen en metros cúbicos de tu vehículo?';
+        }
         break;
-      case 'reason':
-        state.reason = message;
-        response = this.completeAppointment(to);
+      case 'volume':
+        state.volume = parseFloat(message);
+        if (isNaN(state.volume) || state.volume <= 0) {
+          response = 'Por favor, ingresa un número válido mayor a 0 para el volumen.';
+        } else {
+          state.step = 'capacity';
+          response = '¿Cuál es la capacidad de carga máxima en toneladas?';
+        }
+        break;
+      case 'capacity':
+        state.capacity = parseFloat(message);
+        if (isNaN(state.capacity) || state.capacity <= 0) {
+          response = 'Por favor, ingresa un número válido mayor a 0 para la capacidad.';
+        } else {
+          state.step = 'location';
+          response = 'Por favor, comparte tu ubicación actual usando el botón de "Ubicación" en WhatsApp.';
+        }
         break;
       default:
-        console.error(`❌ Estado desconocido en el flujo de agendamiento para ${to}:`, state);
-        response = "Ocurrió un error. Inténtalo de nuevo.";
+        response = "Ocurrió un error en el flujo. Intenta de nuevo.";
     }
-    if (response) {
+    await whatsappService.sendMessage(to, response);
+  }
+
+  async completeTransportAvailability(to) {
+    const state = this.appointState[to];
+    const transportData = {
+      phone: to,
+      vehicleType: state.vehicleType,
+      placa: state.placa,
+      modelo: state.modelo,
+      capacity: state.capacity,
+      volume: state.volume,
+      location: typeof state.location === 'string' ? state.location : { latitude: state.location.latitude, longitude: state.location.longitude },
+      timestamp: new Date().toISOString()
+    };
+    delete this.appointState[to];
+
+    console.log("transportData final:", transportData);
+
+    const availabilityData = [
+      transportData.phone,
+      transportData.vehicleType,
+      transportData.placa,
+      transportData.modelo,
+      transportData.capacity,
+      transportData.volume,
+      typeof transportData.location === 'string' ? transportData.location : `${transportData.location.latitude},${transportData.location.longitude}`,
+      transportData.timestamp
+    ];
+
+    try {
+      await appendToSheet(availabilityData, "Disponibilidad");
+      await whatsappService.sendMessage(to, "¡Gracias! Hemos registrado tu disponibilidad. Buscando un viaje para ti...");
+      const tripMessage = await this.assignTrip(to, transportData);
+      if (tripMessage) {
+        await whatsappService.sendInteractiveButtons(to, tripMessage.text, tripMessage.buttons);
+      }
+    } catch (error) {
+      console.error("Error en completeTransportAvailability:", error);
+      await whatsappService.sendMessage(to, "Lo siento, ocurrió un error al registrar tu disponibilidad. Intenta de nuevo.");
+    }
+  }
+
+  findAvailableTrip(transportData) {
+    const trips = [
+      { cargoType: "Madera", weight: 5, volume: 15, origin: "Medellín", originLat: 6.2518, originLon: -75.5636, destination: "Bogotá", pickupTime: "2025-03-20 10:00" },
+      { cargoType: "Alimentos", weight: 1.5, volume: 10, origin: "Cali", originLat: 3.4516, originLon: -76.5320, destination: "Barranquilla", pickupTime: "2025-03-20 17:00" }
+    ];
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    const foundTrip = trips.find(trip => {
+      const weightMatch = trip.weight <= transportData.capacity;
+      const volumeMatch = trip.volume <= transportData.volume; 
+      const distance = calculateDistance(
+        transportData.location.latitude,
+        transportData.location.longitude,
+        trip.originLat,
+        trip.originLon
+      );
+      const locationMatch = distance <= 50;
+      console.log(`Evaluando viaje: ${trip.cargoType} - Peso: ${weightMatch}, Volumen: ${volumeMatch}, Distancia: ${distance.toFixed(2)} km, Coincide: ${locationMatch}`);
+      return weightMatch && volumeMatch && locationMatch;
+    });
+    console.log("Viaje encontrado:", foundTrip || "Ninguno");
+    return foundTrip;
+  }
+
+  async handleTripTimeout(to) {
+    if (this.tripAssignment[to]) {
+      await whatsappService.sendMessage(to, "No respondiste a tiempo. El viaje se ha asignado a otro transportista.");
+      delete this.tripAssignment[to];
+      delete this.timeoutIds[to];
+      await this.sendMainMenu(to);
+    }
+  }
+
+  async handleBalanceFlow(to, message) {
+    const state = this.appointState[to];
+    if (state.step === 'balanceId') {
+      const balance = this.getBalance(message);
+      const response = `
+        ID: ${message}
+        Saldo disponible: $${balance.available}
+        Facturas pendientes: $${balance.pending} (Próximo pago: ${balance.nextPayment})
+      `;
       await whatsappService.sendMessage(to, response);
+      delete this.appointState[to];
+      await this.sendMainMenu(to);
     }
+  }
+
+  getBalance(id) {
+    return { available: 1500000, pending: 500000, nextPayment: "2025-03-25" };
   }
 
   async sendContact(to) {
     const contact = {
-      addresses: [{
-        street: "Calle Principal",
-        city: "Ciudad",
-        state: "Estado",
-        zip: "1234",
-        country: "Colombia",
-        country_code: "CO",
-        type: "WORK"
-      }],
-      emails: [{
-        email: "contabilidad@cargalibre.com.co",
-        type: "WORK"
-      }],
-      name: {
-        formatted_name: "Transporte Carga Libre",
-        first_name: "Carga Libre",
-        last_name: "Contacto",
-        middle_name: "",
-        suffix: "",
-        prefix: ""
-      },
-      org: {
-        company: "Carga Libre",
-        department: "Atención al cliente",
-        title: "Representante"
-      },
-      phones: [{
-        phone: "+573135815118",
-        wa_id: "573135815118",
-        type: "WORK"
-      }],
-      urls: [{
-        url: "https://cargalibre.com.co",
-        type: "WORK"
-      }]
+      name: { formatted_name: "Transporte CargaLibre", first_name: "CargaLibre" },
+      phones: [{ phone: "+573135815118", wa_id: "573135815118", type: "WORK" }],
+      emails: [{ email: "soporte@cargalibre.com.co", type: "WORK" }],
+      urls: [{ url: "https://cargalibre.com.co", type: "WORK" }]
     };
     await whatsappService.sendContactMessage(to, contact);
   }
-  async sendLocation(to){
-    const latitud=6.2071694;
-    const longuitud=-75.574607;
-    const name='Carga Libre';
-    const addres='Cra dededededede';
 
-    await whatsappService.sendLocationMessage(to,latitud,longuitud,name,addres)
+  async handleAdditionalFlows(to, message) {
+    if (this.appointState[to]) {
+      if (this.appointState[to].step === 'balanceId') {
+        await this.handleBalanceFlow(to, message);
+      } else {
+        await this.handleTransportAvailabilityFlow(to, message);
+      }
+    }
   }
 }
 
