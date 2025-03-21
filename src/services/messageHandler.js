@@ -32,7 +32,7 @@ class MessageHandler {
           await this.sendWelcomeMessage(message.from, message.id, senderInfo);
           await this.sendMainMenu(message.from);
         } else {
-          const validCommands = ['saldo', 'disponibilidad', 'soporte', 'viaje', 'factura'];
+          const validCommands = ['saldo', 'conseguir viaje', 'soporte', 'viaje', 'factura'];
           if (validCommands.some(cmd => incomingMessage.includes(cmd))) {
             const aiResponse = await openRouterService.getAIResponse(message.text.body);
             await whatsappService.sendMessage(message.from, aiResponse, message.id);
@@ -169,7 +169,7 @@ class MessageHandler {
   async sendMainMenu(to) {
     const menuMessage = "Selecciona una opción:";
     const buttons = [
-      { type: 'reply', reply: { id: 'option_1', title: "Disponibilidad" } },
+      { type: 'reply', reply: { id: 'option_1', title: "Conseguir viaje" } },
       { type: 'reply', reply: { id: 'option_2', title: "Consultar Saldo" } },
       { type: 'reply', reply: { id: 'option_3', title: "Soporte" } }
     ];
@@ -187,7 +187,7 @@ class MessageHandler {
 
   async handleMenuOption(to, option) {
     switch (option) {
-      case 'disponibilidad':
+      case 'conseguir viaje':
         delete this.assistantState[to];
         this.appointState[to] = { step: 'vehicleType' };
         await whatsappService.sendMessage(to, "Por favor, indica el tipo de vehículo (turbo, sencillo, dobletroque, mula, etc.).");
@@ -234,7 +234,7 @@ class MessageHandler {
       return;
     }
 
-    if (lowerMessage.includes('disponibilidad') || lowerMessage.includes('viaje') || lowerMessage.includes('vehículo')) {
+    if (lowerMessage.includes('disponibilidad')|| lowerMessage.includes('conseguir viaje') || lowerMessage.includes('viaje') || lowerMessage.includes('vehículo')) {
       delete this.assistantState[to];
       this.appointState[to] = { step: 'vehicleType' };
       await whatsappService.sendMessage(to, "Te voy a guiar para registrar tu disponibilidad. Por favor, indica el tipo de vehículo (camión, tráiler, furgón, etc.).");
@@ -334,8 +334,7 @@ class MessageHandler {
 
     try {
       await appendToSheet(availabilityData, "Disponibilidad");
-      await whatsappService.sendMessage(to, "¡Gracias! Hemos registrado tu disponibilidad. Buscando un viaje para ti...");
-      const tripMessage = await this.assignTrip(to, transportData);
+      await whatsappService.sendMessage(to, "¡Gracias! Estamos buscando un viaje para ti...");      const tripMessage = await this.assignTrip(to, transportData);
       if (tripMessage) {
         await whatsappService.sendInteractiveButtons(to, tripMessage.text, tripMessage.buttons);
       }
@@ -479,6 +478,7 @@ class MessageHandler {
     await whatsappService.sendContactMessage(to, contact);
   }
 
+  
   async handleAdditionalFlows(to, message) {
     if (this.appointState[to]) {
       if (this.appointState[to].step === 'balanceId') {
