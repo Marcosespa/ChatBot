@@ -10,6 +10,7 @@ class MessageHandler {
     this.processing = new Set(); 
   }
 
+  // PRUEBASSS
   async handleIncomingMessage(message, senderInfo) {
     if (!message?.from || !message?.id || this.processing.has(message.from)) return;
     this.processing.add(message.from); // Cambio 6: Bloquear procesamiento múltiple
