@@ -8,6 +8,7 @@ class MessageHandler {
     this.tripAssignment = {};
     this.assistantState = {};
     this.timeoutIds = {};
+    this.menuSent = {}; // Nuevo: Rastrea si el menú ya se envió
   }
 
   async handleIncomingMessage(message, senderInfo) {
@@ -15,6 +16,7 @@ class MessageHandler {
       try {
         const incomingMessage = message.text.body.toLowerCase().trim();
         console.log(`Mensaje de texto recibido: ${incomingMessage}`);
+
         if (this.appointState[message.from]) {
           await this.handleAdditionalFlows(message.from, incomingMessage);
           return;
@@ -30,13 +32,21 @@ class MessageHandler {
         }
         if (this.isGreeting(incomingMessage)) {
           await this.sendWelcomeMessage(message.from, message.id, senderInfo);
+          if (!this.menuSent[message.from]) {
           await this.sendMainMenu(message.from);
+          this.menuSent[message.from] = true; // Marcar que el menú ya se envió
+          }
         } else {
           const validCommands = ['saldo', 'conseguir viaje', 'soporte', 'viaje', 'factura'];
           if (validCommands.some(cmd => incomingMessage.includes(cmd))) {
             const aiResponse = await openRouterService.getAIResponse(message.text.body);
             await whatsappService.sendMessage(message.from, aiResponse, message.id);
-          } else {
+          } if (!this.menuSent[message.from]) {
+            await this.sendMainMenu(message.from);
+            this.menuSent[message.from] = true; // Enviar menú solo si no se ha enviado
+          }
+          
+          else {
             await whatsappService.sendMessage(
               message.from,
               'No reconocí tu mensaje. Usa "hola" para empezar o di "soporte" para ayuda.',
@@ -135,9 +145,11 @@ class MessageHandler {
       ];
       await appendToSheet(acceptedTripData, "ViajesAceptados");
       delete this.tripAssignment[to];
+      delete this.menuSent[to]; // Resetear para permitir un nuevo menú
     } else if (response === 'rechazar') {
       await whatsappService.sendMessage(to, "Viaje rechazado. Puedes solicitar otro cuando desees.");
       delete this.tripAssignment[to];
+      delete this.menuSent[to]; // Resetear antes de enviar el menú
       await this.sendMainMenu(to);
     } else {
       await whatsappService.sendMessage(to, "Respuesta no válida. Usa los botones 'Aceptar' o 'Rechazar'.");
@@ -227,6 +239,7 @@ class MessageHandler {
 
     if (lowerMessage === 'salir' || lowerMessage === 'volver') {
       delete this.assistantState[to];
+      delete this.menuSent[to]; 
       await whatsappService.sendMessage(to, "Volviendo al menú principal...");
       await this.sendMainMenu(to);
       return;
@@ -337,10 +350,12 @@ class MessageHandler {
 
     try {
       await appendToSheet(availabilityData, "Disponibilidad");
-      await whatsappService.sendMessage(to, "¡Gracias! Estamos buscando un viaje para ti...");      const tripMessage = await this.assignTrip(to, transportData);
+      await whatsappService.sendMessage(to, "¡Gracias! Estamos buscando un viaje para ti...");      
+      const tripMessage = await this.assignTrip(to, transportData);
       if (tripMessage) {
         await whatsappService.sendInteractiveButtons(to, tripMessage.text, tripMessage.buttons);
       }
+      delete this.menuSent[to]; // Resetear para permitir un nuevo menú después
     } catch (error) {
       console.error("Error en completeTransportAvailability:", error);
       await whatsappService.sendMessage(to, "Lo siento, ocurrió un error al registrar tu disponibilidad. Intenta de nuevo.");
