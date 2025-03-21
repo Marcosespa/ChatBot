@@ -122,9 +122,9 @@ async function readFromSheet(auth, spreadsheetId, sheetName, range) {
   }
 }
 
-export const appendToSheet = async (data, sheetName) => {
+const appendToSheet = async (data, sheetName) => {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS), // Usar variable de entorno
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   const authClient = await auth.getClient();
@@ -132,13 +132,14 @@ export const appendToSheet = async (data, sheetName) => {
   return await addRowToSheets(authClient, spreadsheetId, data, sheetName);
 };
 
-export const fetchFromSheet = async (sheetName, range) => {
+const fetchFromSheet = async (sheetName, range) => {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS), // Usar variable de entorno
+    credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS),
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
   const authClient = await auth.getClient();
   const spreadsheetId = process.env.SPREAD_SHEET_ID;
   return await readFromSheet(authClient, spreadsheetId, sheetName, range);
 };
+
 export { appendToSheet, fetchFromSheet };
