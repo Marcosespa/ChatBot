@@ -10,7 +10,6 @@ class TripManager {
   async assignTrip(to, transportData) {
     const availableTrip = await this.findAvailableTrip(transportData);
     if (!availableTrip) {
-      // Cambio 1: Mensaje más amigable
       await messageSender.sendText(to, "¡Vaya! 😔 No hay viajes disponibles ahora. Intenta de nuevo más tarde. 🚚");
       return null;
     }
@@ -29,8 +28,8 @@ class TripManager {
         Tienes 10 minutos para responder. ¿Aceptas? ⏳
       `,
       buttons: [
-        { type: 'reply', reply: { id: 'accept', title: "Aceptar ✅" } },
-        { type: 'reply', reply: { id: 'reject', title: "Rechazar ❌" } }
+        { type: 'reply', reply: { id: 'accept_trip', title: "Aceptar ✅" } },
+        { type: 'reply', reply: { id: 'reject_trip', title: "Rechazar ❌" } }
       ]
     };
     this.timeoutIds[to] = setTimeout(() => this.handleTimeout(to), 10 * 60 * 1000);
@@ -44,7 +43,6 @@ class TripManager {
       return false;
     }
 
-    // Cambio 3: Verificar si el temporizador sigue activo
     if (this.timeoutIds[to]) {
       clearTimeout(this.timeoutIds[to]);
       delete this.timeoutIds[to];
@@ -54,7 +52,8 @@ class TripManager {
       return false;
     }
 
-    if (response === 'aceptar') {
+    // Cambio: Usar IDs en lugar de títulos
+    if (response === 'accept_trip') {
       const confirmationCode = Math.random().toString(36).substring(2, 8).toUpperCase();
       const finalMessage = `
         ¡Viaje aceptado! 🎉
@@ -75,7 +74,7 @@ class TripManager {
       await appendToSheet(tripData, "ViajesAceptados");
       delete this.assignments[to];
       return true;
-    } else if (response === 'rechazar') {
+    } else if (response === 'reject_trip') {
       await messageSender.sendText(to, "¡Entendido! 🙌 Viaje rechazado. Pide otro cuando quieras. 🚚");
       delete this.assignments[to];
       return true;
@@ -92,7 +91,7 @@ class TripManager {
       delete this.timeoutIds[to];
     }
   }
-
+  
   async findAvailableTrip(transportData) {
     try {
       const rows = await fetchFromSheet("ViajesDisponibles", "A:I");

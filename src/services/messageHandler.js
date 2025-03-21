@@ -7,13 +7,12 @@ class MessageHandler {
   constructor() {
     this.assistantState = {};
     this.menuSent = {};
-    this.processing = new Set(); 
+    this.processing = new Set();
   }
 
-  // PRUEBASSS
   async handleIncomingMessage(message, senderInfo) {
     if (!message?.from || !message?.id || this.processing.has(message.from)) return;
-    this.processing.add(message.from); // Cambio 6: Bloquear procesamiento múltiple
+    this.processing.add(message.from);
 
     try {
       if (message.type === 'text') {
@@ -27,7 +26,7 @@ class MessageHandler {
           await conversationFlow.handleFlow(message.from, text);
         } else if (tripManager.assignments[message.from]) {
           const completed = await tripManager.handleTripResponse(message.from, text);
-          if (completed) await this.completeFlow(message.from); // Cambio 4: Limpieza consistente
+          if (completed) await this.completeFlow(message.from);
         } else if (this.assistantState[message.from]) {
           await this.handleAIAssistantFlow(message.from, text);
         } else if (this.isConversationStarter(text, hasPreviousState)) {
@@ -39,7 +38,6 @@ class MessageHandler {
             const aiResponse = await openRouterService.getAIResponse(message.text.body);
             await messageSender.sendText(message.from, aiResponse, message.id);
           } else {
-            // Cambio 7: Mensaje más amigable para mensajes no válidos
             await messageSender.sendText(message.from, "¡Ups! 🙈 No entendí eso. Prueba con 'hola' para empezar o 'soporte' para ayuda. 😊");
           }
           await this.sendMainMenuIfNotSent(message.from);
@@ -47,10 +45,11 @@ class MessageHandler {
       } else if (message.type === 'location') {
         await conversationFlow.handleLocation(message.from, message.location);
       } else if (message.type === 'interactive') {
-        const option = message.interactive.button_reply.title.toLowerCase().trim();
+        // Usar el ID del botón en lugar del título
+        const option = message.interactive.button_reply.id.toLowerCase().trim();
         if (tripManager.assignments[message.from]) {
           const completed = await tripManager.handleTripResponse(message.from, option);
-          if (completed) await this.completeFlow(message.from); // Cambio 4: Limpieza consistente
+          if (completed) await this.completeFlow(message.from);
         } else {
           await this.handleMenuOption(message.from, option);
         }
@@ -60,7 +59,7 @@ class MessageHandler {
       console.error('Error handling message:', error);
       await messageSender.sendText(message.from, "¡Lo siento! 😓 Ocurrió un error. Intenta de nuevo, por favor. 🙏");
     } finally {
-      this.processing.delete(message.from); // Cambio 6: Liberar bloqueo
+      this.processing.delete(message.from);
     }
   }
 
@@ -86,13 +85,11 @@ class MessageHandler {
 
   async sendWelcomeMessage(to, messageId, senderInfo) {
     const name = this.getSenderName(senderInfo);
-    // Cambio 1: Mensaje más amigable con emojis
     const WELCOME_MESSAGE = `¡Hola ${name}! 👋 Bienvenid@ a Transporte CargaLibre. ¿En qué puedo ayudarte hoy? 😊`;
     await messageSender.sendText(to, WELCOME_MESSAGE, messageId);
   }
 
   async sendMainMenu(to) {
-    // Cambio 1: Menú con emojis
     const menuMessage = "Selecciona una opción: 🚚";
     const buttons = [
       { type: 'reply', reply: { id: 'option_1', title: "Conseguir viaje 🚛" } },
@@ -110,7 +107,6 @@ class MessageHandler {
   }
 
   async completeFlow(to) {
-    // Cambio 4: Limpieza consistente de todos los estados
     conversationFlow.resetState(to);
     delete tripManager.assignments[to];
     if (tripManager.timeoutIds[to]) {
@@ -124,20 +120,33 @@ class MessageHandler {
 
   async handleMenuOption(to, option) {
     switch (option) {
-      case 'conseguir viaje':
+      case 'option_1':
         delete this.assistantState[to];
         conversationFlow.startAvailabilityFlow(to);
-        // Cambio 1: Mensaje más amigable
         await messageSender.sendText(to, "¡Genial! 🚚 Indica el tipo de vehículo (turbo, sencillo, dobletroque, mula, etc.).");
         break;
-      case 'consultar saldo':
+      case 'option_2':
         delete this.assistantState[to];
         conversationFlow.startBalanceFlow(to);
         await messageSender.sendText(to, "¡Claro! 💸 Por favor, ingresa tu ID de manifiesto.");
         break;
-      case 'soporte':
+      case 'option_3':
         this.assistantState[to] = { active: true };
         await messageSender.sendText(to, "¡Aquí estoy para ayudarte! 🤖 Soy tu asistente de Transporte CargaLibre. ¿En qué te ayudo? (Di 'salir' para volver o 'agente' para soporte humano).");
+        break;
+      // Botones de confirmación de agente humano
+      case 'yes_agent':
+        delete this.assistantState[to];
+        await messageSender.sendText(to, "¡Perfecto! 📞 Contacta a nuestro equipo: +573135815118");
+        await messageSender.sendSupportContact(to);
+        await this.sendMainMenu(to);
+        break;
+      case 'no_agent':
+        if (this.assistantState[to]) {
+          await messageSender.sendText(to, "¡Ok! 😊 Sigo aquí para ayudarte. ¿En qué más puedo ayudarte?");
+        } else {
+          await this.sendMainMenu(to);
+        }
         break;
       default:
         await messageSender.sendText(to, "¡Ups! 🙈 Opción no válida. Usa los botones del menú, por favor. 😊");
@@ -146,7 +155,7 @@ class MessageHandler {
 
   async handleAIAssistantFlow(to, message) {
     if (message === 'salir' || message === 'volver') {
-      await this.completeFlow(to); // Cambio 4: Usar limpieza completa
+      await this.completeFlow(to);
       return;
     }
 
