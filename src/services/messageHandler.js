@@ -119,8 +119,8 @@ class MessageHandler {
       `;
       
       await whatsappService.sendMessage(to, finalMessage);
-      await whatsappService.sendMessage(to,"Para ultimar detalles y verificar que todo haya sido asignado de manera correcta comunicate con nuestro despachar");
-      await whatsappService.sendContactMessage(to);
+      await whatsappService.sendMessage(to,"Para ultimar detalles y verificar que todo haya sido asignado de manera correcta comunicate con nuestro despachador");
+      await this.sendContact(to);
       const acceptedTripData = [
         to,
         assignment.trip.cargoType,
