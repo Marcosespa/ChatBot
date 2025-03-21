@@ -297,10 +297,13 @@ class MessageHandler {
         }
         break;
       default:
-        response = "Ocurrió un error en el flujo. Intenta de nuevo.";
+        console.error(`Estado inesperado en handleTransportAvailabilityFlow para ${to}:`, state);
+        delete this.appointState[to];
+        this.appointState[to] = { step: 'vehicleType' };
+        response = "Parece que algo salió mal. Vamos a empezar de nuevo. Por favor, indica el tipo de vehículo (turbo, sencillo, dobletroque, mula, etc.).";
     }
     await whatsappService.sendMessage(to, response);
-  }
+  } 
 
   async completeTransportAvailability(to) {
     const state = this.appointState[to];
@@ -418,7 +421,7 @@ class MessageHandler {
       } else {
         const totalAvailable = balances.reduce((sum, b) => sum + b.available, 0);
         const totalPending = balances.reduce((sum, b) => sum + b.pending, 0);
-        const pendingDetails = balances.map((b, index) => 
+        const pendingDetails = balances.map((b, index) =>
           `Pago ${index + 1}: $${b.pending} (Próximo pago: ${b.nextPayment})`
         ).join('\n');
         response = `
