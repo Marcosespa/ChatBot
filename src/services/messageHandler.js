@@ -117,7 +117,10 @@ class MessageHandler {
         Detalles: ${assignment.trip.origin} -> ${assignment.trip.destination}
         Flete: $${assignment.trip.flete}
       `;
+      
       await whatsappService.sendMessage(to, finalMessage);
+      await whatsappService.sendMessage(to,"Para ultimar detalles y verificar que todo haya sido asignado de manera correcta comunicate con nuestro despachar");
+      await whatsappService.sendContactMessage(to);
       const acceptedTripData = [
         to,
         assignment.trip.cargoType,
@@ -478,7 +481,7 @@ class MessageHandler {
     await whatsappService.sendContactMessage(to, contact);
   }
 
-  
+
   async handleAdditionalFlows(to, message) {
     if (this.appointState[to]) {
       if (this.appointState[to].step === 'balanceId') {
