@@ -12,9 +12,13 @@ const STEPS = {
   BALANCE_ID: 'balanceId'
 };
 
-const validatePlaca = (placa) => /^[A-Z]{3}\d{3}$/.test(placa.toUpperCase());
+// const validatePlaca = (placa) => /^[A-Z]{3}\d{3}$/.test(placa.toUpperCase());
+const validatePlaca = (placa) => /^[A-Z]{3}\d{2,3}[A-Z]?$/.test(placa.toUpperCase()); // ABC123 o ABC123A
 const validateYear = (year) => /^\d{4}$/.test(year) && parseInt(year) >= 1900 && parseInt(year) <= new Date().getFullYear();
 const validateNumber = (num) => !isNaN(parseFloat(num)) && parseFloat(num) > 0;
+const VEHICLE_TYPES = ["turbo", "sencillo", "dobletroque", "mula", "volqueta", "furgón"];
+
+
 
 class ConversationFlow {
   constructor() {
@@ -51,10 +55,26 @@ class ConversationFlow {
     }
   }
 
+
+  
+
   async handleAvailabilityFlow(to, message) {
     const state = this.state[to];
     switch (state.step) {
       case STEPS.VEHICLE_TYPE:
+        const userInput = message.toLowerCase().trim();
+        if (!VEHICLE_TYPES.includes(userInput)){
+          await messageSender.sendText(to,
+            `🚫 *Tipo de vehículo no reconocido*\n\n` +
+            `Ejemplos válidos:\n` +
+            `- ${VEHICLE_TYPES.slice(0, 3).join(", ")}\n` +
+            `- ${VEHICLE_TYPES.slice(3).join(", ")}\n\n` +
+            `¿Cuál es tu tipo de vehículo? (o escribe *"salir"* para cancelar)`
+          );
+          return;
+          
+        }
+        state.vehicleType = userInput;
         state.vehicleType = message;
         state.step = STEPS.PLACA;
         await messageSender.sendText(to, "¡Perfecto! 🔢 ¿Cuál es la placa de tu vehículo?");
@@ -173,14 +193,27 @@ class ConversationFlow {
 
   startAvailabilityFlow(to) {
     this.state[to] = { step: STEPS.VEHICLE_TYPE };
+    if (this.state[to].timeoutId) clearTimeout(this.state[to].timeoutId);
+    this.state[to].timeoutId = setTimeout(() => {
+      this.resetState(to);
+      messageSender.sendText(to," *Sesión cerrada* por inactividad. ¡Envía 'hola' para empezar de nuevo! ")
+    },600_000);
+
   }
 
   startBalanceFlow(to) {
     this.state[to] = { step: STEPS.BALANCE_ID };
+    if(this.state[to],timeoutId) clearTimeout(this.state[to].timeoutId);
+    this.state[to].timeoutId =setTimeout(()=>{
+      this.resetState(to);
+      messageSender.sendText(to," *Sesión cerrada* por inactividad. ¡Envía 'hola' para empezar de nuevo! ")
+    },600_000)
   }
-
   resetState(to) {
-    delete this.state[to];
+    if (this.state[to]?.timeoutId) {
+      clearTimeout(this.state[to].timeoutId); // Limpiar el timeout
+    }
+    delete this.state[to]; // Eliminar el estado
   }
 }
 

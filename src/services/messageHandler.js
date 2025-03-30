@@ -2,6 +2,7 @@ import messageSender from './messageSender.js';
 import tripManager from './tripManager.js';
 import conversationFlow from './conversationFlow.js';
 import openRouterService from './openRouterService.js';
+const VEHICLE_TYPES = ["turbo", "sencillo", "dobletroque", "mula", "volqueta", "furgón"];
 
 class MessageHandler {
   constructor() {
@@ -123,7 +124,9 @@ class MessageHandler {
       case 'option_1':
         delete this.assistantState[to];
         conversationFlow.startAvailabilityFlow(to);
+        
         await messageSender.sendText(to, "¡Genial! 🚚 Indica el tipo de vehículo (turbo, sencillo, dobletroque, mula, etc.).");
+
         break;
       case 'option_2':
         delete this.assistantState[to];

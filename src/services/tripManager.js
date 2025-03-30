@@ -132,7 +132,7 @@ class TripManager {
           trip.originLat,
           trip.originLon
         );
-        const locationMatch = distance <= 50;
+        const locationMatch = distance <= 200; // Distancia máxima de 200 km
         console.log(`Evaluando viaje: ${trip.cargoType} - Peso: ${weightMatch}, Volumen: ${volumeMatch}, Distancia: ${distance.toFixed(2)} km, Coincide: ${locationMatch}, Flete: $${trip.flete}`);
         return weightMatch && volumeMatch && locationMatch;
       });
